@@ -1,0 +1,95 @@
+services:
+  # ---- PostgreSQL ----
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ticketing
+      POSTGRES_PASSWORD: ticketing123
+      POSTGRES_DB: ticketing
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ticketing -d ticketing"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis ----
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---- DB Migration + Seed ----
+  db-migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ticketing:ticketing123@postgres:5432/ticketing
+    command: >
+      sh -c "
+        cd packages/database &&
+        npx drizzle-kit push --config=drizzle.config.ts &&
+        npx tsx src/seed.ts
+      "
+    restart: "no"
+
+  # ---- NestJS API ----
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      DATABASE_URL: postgresql://ticketing:ticketing123@postgres:5432/ticketing
+      DATABASE_POOL_SIZE: "10"
+      REDIS_URL: redis://redis:6379
+      API_KEY: my-secret-api-key
+      PRICING_TIME_WEIGHT: "1.0"
+      PRICING_DEMAND_WEIGHT: "1.0"
+      PRICING_INVENTORY_WEIGHT: "1.0"
+
+  # ---- Next.js Frontend ----
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+
+volumes:
+  postgres_data:
+  redis_data:
