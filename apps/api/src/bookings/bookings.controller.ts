@@ -22,14 +22,21 @@ export class BookingsController {
   }
 
   @Get()
-  findByEventId(@Query('eventId') eventId: string | undefined) {
-    if (eventId === undefined || eventId === null) {
-      throw new BadRequestException('eventId query parameter is required');
+  find(
+    @Query('eventId') eventId?: string,
+    @Query('email') email?: string,
+  ) {
+    if (email) {
+      return this.bookingsService.findByEmail(email);
+    }
+
+    if (!eventId) {
+      throw new BadRequestException('eventId or email query parameter is required');
     }
 
     const parsed = parseInt(eventId, 10);
     if (Number.isNaN(parsed)) {
-      throw new BadRequestException('eventId query parameter is required');
+      throw new BadRequestException('eventId must be a valid number');
     }
 
     return this.bookingsService.findByEventId(parsed);

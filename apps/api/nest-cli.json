@@ -1,6 +1,7 @@
 {
   "sourceRoot": "src",
   "compilerOptions": {
-    "deleteOutDir": true
+    "deleteOutDir": true,
+    "builder": "swc"
   }
 }

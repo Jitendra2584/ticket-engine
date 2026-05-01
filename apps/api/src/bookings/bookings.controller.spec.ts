@@ -9,12 +9,14 @@ describe('BookingsController', () => {
   let bookingsService: {
     createBooking: ReturnType<typeof vi.fn>;
     findByEventId: ReturnType<typeof vi.fn>;
+    findByEmail: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
     bookingsService = {
       createBooking: vi.fn(),
       findByEventId: vi.fn(),
+      findByEmail: vi.fn(),
     };
     controller = new BookingsController(
       bookingsService as unknown as BookingsService,
@@ -23,7 +25,7 @@ describe('BookingsController', () => {
 
   describe('create (POST /bookings)', () => {
     it('should call bookingsService.createBooking with the dto and return the result', async () => {
-      const dto = { eventId: 1, userEmail: 'user@example.com', quantity: 2 };
+      const dto = { eventId: 1, userEmail: 'user@example.com', quantity: 2, expectedPrice: 120 };
       const mockBooking: BookingResponse = {
         id: 1,
         eventId: 1,
@@ -41,7 +43,7 @@ describe('BookingsController', () => {
     });
   });
 
-  describe('findByEventId (GET /bookings)', () => {
+  describe('find (GET /bookings)', () => {
     it('should call bookingsService.findByEventId with the parsed eventId', async () => {
       const mockBookings: BookingResponse[] = [
         {
@@ -55,27 +57,46 @@ describe('BookingsController', () => {
       ];
       bookingsService.findByEventId.mockResolvedValue(mockBookings);
 
-      const result = await controller.findByEventId('5');
+      const result = await controller.find('5', undefined);
 
       expect(bookingsService.findByEventId).toHaveBeenCalledWith(5);
       expect(result).toEqual(mockBookings);
     });
 
-    it('should throw BadRequestException when eventId is undefined', () => {
-      expect(() => controller.findByEventId(undefined)).toThrow(
+    it('should call bookingsService.findByEmail when email is provided', async () => {
+      const mockBookings: BookingResponse[] = [
+        {
+          id: 1,
+          eventId: 5,
+          userEmail: 'user@example.com',
+          quantity: 1,
+          pricePaid: 100,
+          bookedAt: '2025-07-01T00:00:00.000Z',
+        },
+      ];
+      bookingsService.findByEmail.mockResolvedValue(mockBookings);
+
+      const result = await controller.find(undefined, 'user@example.com');
+
+      expect(bookingsService.findByEmail).toHaveBeenCalledWith('user@example.com');
+      expect(result).toEqual(mockBookings);
+    });
+
+    it('should throw BadRequestException when neither eventId nor email is provided', () => {
+      expect(() => controller.find(undefined, undefined)).toThrow(
         BadRequestException,
       );
-      expect(() => controller.findByEventId(undefined)).toThrow(
-        'eventId query parameter is required',
+      expect(() => controller.find(undefined, undefined)).toThrow(
+        'eventId or email query parameter is required',
       );
     });
 
     it('should throw BadRequestException when eventId is not a valid number', () => {
-      expect(() => controller.findByEventId('abc')).toThrow(
+      expect(() => controller.find('abc', undefined)).toThrow(
         BadRequestException,
       );
-      expect(() => controller.findByEventId('abc')).toThrow(
-        'eventId query parameter is required',
+      expect(() => controller.find('abc', undefined)).toThrow(
+        'eventId must be a valid number',
       );
     });
   });

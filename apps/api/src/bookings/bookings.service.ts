@@ -9,7 +9,6 @@ import { events, bookings } from '@repo/database';
 import type { db as drizzleDb } from '@repo/database';
 import { DATABASE } from '../database/database.constants';
 import { PricingService } from '../pricing/pricing.service';
-import { CacheService, CachePrefix, CacheTTL } from '../redis/cache.service';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { BookingResponse } from './dto/booking-response.dto';
 
@@ -21,7 +20,6 @@ export class BookingsService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly pricingService: PricingService,
-    private readonly cache: CacheService,
   ) {}
 
   /**
@@ -86,28 +84,56 @@ export class BookingsService {
         },
       );
 
-      // Insert booking record with price snapshot
-      const [booking] = await tx
-        .insert(bookings)
-        .values({
-          eventId: dto.eventId,
-          userEmail: dto.userEmail,
-          quantity: dto.quantity,
-          pricePaid: String(breakdown.finalPrice),
-        })
-        .returning();
+      // Reject if the price the user saw no longer matches the server price
+      if (
+        Math.abs(dto.expectedPrice - breakdown.finalPrice) > 0.01
+      ) {
+        throw new ConflictException({
+          code: 'PRICE_CHANGED',
+          message: 'The price has changed since you last viewed it. Please review the new price.',
+          currentPrice: breakdown.finalPrice,
+        });
+      }
 
-      // Atomically increment booked tickets
-      await tx
-        .update(events)
-        .set({ bookedTickets: event.bookedTickets + dto.quantity })
-        .where(eq(events.id, dto.eventId));
+      const newBookedTickets = event.bookedTickets + dto.quantity;
+
+      // Recalculate the event's currentPrice based on the NEW inventory state
+      const postBookingBreakdown = this.pricingService.computePrice(
+        basePrice,
+        floorPrice,
+        ceilingPrice,
+        rules,
+        {
+          eventDate: event.date,
+          now,
+          totalTickets: event.totalTickets,
+          bookedTickets: newBookedTickets,
+          recentBookingsCount: recentBookingsCount + 1,
+        },
+      );
+
+      // Insert booking at the price user agreed to, update event with new state
+      const [[booking]] = await Promise.all([
+        tx
+          .insert(bookings)
+          .values({
+            eventId: dto.eventId,
+            userEmail: dto.userEmail,
+            quantity: dto.quantity,
+            pricePaid: String(breakdown.finalPrice),
+          })
+          .returning(),
+        tx
+          .update(events)
+          .set({
+            bookedTickets: sql`${events.bookedTickets} + ${dto.quantity}`,
+            currentPrice: String(postBookingBreakdown.finalPrice),
+          })
+          .where(eq(events.id, dto.eventId)),
+      ]);
 
       return booking;
     });
-
-    // Invalidate caches after successful booking (atomic Lua script)
-    await this.cache.invalidateAfterBooking(dto.eventId);
 
     return {
       id: result.id,
@@ -127,6 +153,25 @@ export class BookingsService {
       .select()
       .from(bookings)
       .where(eq(bookings.eventId, eventId));
+
+    return rows.map((row) => ({
+      id: row.id,
+      eventId: row.eventId,
+      userEmail: row.userEmail,
+      quantity: row.quantity,
+      pricePaid: parseFloat(row.pricePaid),
+      bookedAt: row.bookedAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Returns all bookings for a given user email.
+   */
+  async findByEmail(email: string): Promise<BookingResponse[]> {
+    const rows = await this.db
+      .select()
+      .from(bookings)
+      .where(eq(bookings.userEmail, email));
 
     return rows.map((row) => ({
       id: row.id,

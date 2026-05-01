@@ -1,20 +1,10 @@
-'use client';
-
-import { use } from 'react';
 import Link from 'next/link';
-import { useEvent } from '../../../lib/api/hooks';
-
-/* ------------------------------------------------------------------ */
-/*  Formatting helpers                                                 */
-/* ------------------------------------------------------------------ */
+import { fetchEvent } from '../../../lib/api/server';
+import type { EventDetailResponse } from '../../../lib/api/types';
 
 function formatPrice(price: number): string {
   return price.toFixed(2);
 }
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
 
 interface BookingParams {
   bookingId: string;
@@ -24,10 +14,6 @@ interface BookingParams {
   eventId: string;
 }
 
-/**
- * Parse and validate search params. Returns null if any required param
- * is missing or cannot be parsed.
- */
 function parseSearchParams(
   raw: Record<string, string | string[] | undefined>,
 ): BookingParams | null {
@@ -37,72 +23,17 @@ function parseSearchParams(
   const pricePaidStr = typeof raw.pricePaid === 'string' ? raw.pricePaid : undefined;
   const eventId = typeof raw.eventId === 'string' ? raw.eventId : undefined;
 
-  if (!bookingId || !eventName || !quantityStr || !pricePaidStr || !eventId) {
-    return null;
-  }
+  if (!bookingId || !eventName || !quantityStr || !pricePaidStr || !eventId) return null;
 
   const quantity = parseInt(quantityStr, 10);
   const pricePaid = parseFloat(pricePaidStr);
 
-  if (Number.isNaN(quantity) || Number.isNaN(pricePaid) || quantity <= 0) {
-    return null;
-  }
+  if (Number.isNaN(quantity) || Number.isNaN(pricePaid) || quantity <= 0) return null;
 
   return { bookingId, eventName, quantity, pricePaid, eventId };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Missing params fallback                                            */
-/* ------------------------------------------------------------------ */
-
-function MissingParamsMessage() {
-  return (
-    <main className="mx-auto max-w-2xl px-4 py-16 sm:px-6 lg:px-8">
-      <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-8 text-center">
-        <p className="text-lg font-semibold text-yellow-800">
-          Booking details not found
-        </p>
-        <p className="mt-2 text-sm text-yellow-600">
-          It looks like you navigated here directly. Please book tickets from an
-          event page to see your confirmation.
-        </p>
-        <Link
-          href="/events"
-          className="mt-6 inline-block rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
-        >
-          Browse Events
-        </Link>
-      </div>
-    </main>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Price comparison component                                         */
-/* ------------------------------------------------------------------ */
-
-function PriceComparison({
-  pricePaid,
-  eventId,
-}: {
-  pricePaid: number;
-  eventId: string;
-}) {
-  const { data: event, isLoading, error } = useEvent(eventId);
-
-  if (isLoading) {
-    return (
-      <div className="animate-pulse rounded-lg bg-gray-100 p-4">
-        <div className="h-4 w-2/3 rounded bg-gray-200" />
-      </div>
-    );
-  }
-
-  if (error || !event) {
-    return null;
-  }
-
-  const currentPrice = event.priceBreakdown.finalPrice;
+function PriceComparison({ pricePaid, currentPrice }: { pricePaid: number; currentPrice: number }) {
   const diff = pricePaid - currentPrice;
 
   let comparisonText: string;
@@ -138,17 +69,49 @@ function PriceComparison({
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Success content                                                    */
-/* ------------------------------------------------------------------ */
+export default async function BookingSuccessPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const raw = await searchParams;
+  const params = parseSearchParams(raw);
 
-function SuccessContent({ params }: { params: BookingParams }) {
+  if (!params) {
+    return (
+      <main className="mx-auto max-w-2xl px-4 py-16 sm:px-6 lg:px-8">
+        <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-8 text-center">
+          <p className="text-lg font-semibold text-yellow-800">
+            Booking details not found
+          </p>
+          <p className="mt-2 text-sm text-yellow-600">
+            It looks like you navigated here directly. Please book tickets from an
+            event page to see your confirmation.
+          </p>
+          <Link
+            href="/events"
+            className="mt-6 inline-block rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            Browse Events
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  let currentPrice: number | null = null;
+  try {
+    const event: EventDetailResponse = await fetchEvent(params.eventId);
+    currentPrice = event.priceBreakdown.finalPrice;
+  } catch {
+    // Price comparison will be skipped if fetch fails
+  }
+
   const totalPaid = params.quantity * params.pricePaid;
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-16 sm:px-6 lg:px-8">
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
-        {/* Success icon and heading */}
         <div className="text-center">
           <div
             className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100"
@@ -176,7 +139,6 @@ function SuccessContent({ params }: { params: BookingParams }) {
           </p>
         </div>
 
-        {/* Booking details */}
         <section aria-label="Booking details" className="mt-8">
           <h2 className="text-lg font-semibold text-gray-900">
             Booking Details
@@ -217,15 +179,15 @@ function SuccessContent({ params }: { params: BookingParams }) {
           </dl>
         </section>
 
-        {/* Price comparison */}
-        <section aria-label="Price comparison" className="mt-6">
-          <PriceComparison
-            pricePaid={params.pricePaid}
-            eventId={params.eventId}
-          />
-        </section>
+        {currentPrice !== null && (
+          <section aria-label="Price comparison" className="mt-6">
+            <PriceComparison
+              pricePaid={params.pricePaid}
+              currentPrice={currentPrice}
+            />
+          </section>
+        )}
 
-        {/* Navigation links */}
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link
             href={`/events/${params.eventId}`}
@@ -243,23 +205,4 @@ function SuccessContent({ params }: { params: BookingParams }) {
       </div>
     </main>
   );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Page component                                                     */
-/* ------------------------------------------------------------------ */
-
-export default function BookingSuccessPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}) {
-  const raw = use(searchParams);
-  const params = parseSearchParams(raw);
-
-  if (!params) {
-    return <MissingParamsMessage />;
-  }
-
-  return <SuccessContent params={params} />;
 }

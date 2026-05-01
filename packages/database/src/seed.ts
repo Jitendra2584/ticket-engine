@@ -1,4 +1,4 @@
-import { db, events, bookings } from "./index";
+import { db, events, bookings } from "./index.ts";
 
 /** Helper to create a Date a given number of days from now. */
 function daysFromNow(days: number): Date {

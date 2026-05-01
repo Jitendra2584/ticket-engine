@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from './redis.constants';
 
@@ -57,21 +57,23 @@ const LUA_INVALIDATE_AFTER_BOOKING = `
 `;
 
 @Injectable()
-export class CacheService {
+export class CacheService implements OnModuleInit {
   private readonly logger = new Logger(CacheService.name);
   private connected = false;
 
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
-  ) {
-    if (this.redis) {
-      this.redis.connect().then(() => {
-        this.connected = true;
-        this.logger.log('Redis connected');
-      }).catch((err: Error) => {
-        this.logger.warn(`Redis connection failed, running without cache: ${err.message}`);
-        this.connected = false;
-      });
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.connect();
+      this.connected = true;
+      this.logger.log('Redis connected');
+    } catch (err) {
+      this.logger.warn(`Redis connection failed, running without cache: ${(err as Error).message}`);
+      this.connected = false;
     }
   }
 

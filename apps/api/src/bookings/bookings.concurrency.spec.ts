@@ -38,6 +38,17 @@ async function createEventWithTickets(
   return res.body.id as number;
 }
 
+/** Fetches the current dynamic price for an event. */
+async function getCurrentPrice(
+  app: INestApplication,
+  eventId: number,
+): Promise<number> {
+  const res = await request(app.getHttpServer())
+    .get(`/events/${eventId}`)
+    .expect(200);
+  return res.body.priceBreakdown.finalPrice as number;
+}
+
 describe.skipIf(!hasDatabase)('Concurrent Bookings', () => {
   let app: INestApplication;
 
@@ -67,14 +78,17 @@ describe.skipIf(!hasDatabase)('Concurrent Bookings', () => {
     // Setup: Create event with exactly 1 remaining ticket
     const eventId = await createEventWithTickets(app, 1);
 
+    // Get the current price so both requests send expectedPrice
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
     // Execute: Fire 2 simultaneous POST /bookings requests
     const [res1, res2] = await Promise.all([
       request(app.getHttpServer())
         .post('/bookings')
-        .send({ eventId, userEmail: 'user1@test.com', quantity: 1 }),
+        .send({ eventId, userEmail: 'user1@test.com', quantity: 1, expectedPrice }),
       request(app.getHttpServer())
         .post('/bookings')
-        .send({ eventId, userEmail: 'user2@test.com', quantity: 1 }),
+        .send({ eventId, userEmail: 'user2@test.com', quantity: 1, expectedPrice }),
     ]);
 
     // Assert: Exactly 1 response is 201, exactly 1 is 409
@@ -102,12 +116,14 @@ describe.skipIf(!hasDatabase)('Concurrent Bookings', () => {
     // Setup: Create event with 3 tickets
     const eventId = await createEventWithTickets(app, 3);
 
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
     // Execute: Fire 5 simultaneous booking requests (each for 1 ticket)
     const responses = await Promise.all(
       Array.from({ length: 5 }, (_, i) =>
         request(app.getHttpServer())
           .post('/bookings')
-          .send({ eventId, userEmail: `user${i + 1}@test.com`, quantity: 1 }),
+          .send({ eventId, userEmail: `user${i + 1}@test.com`, quantity: 1, expectedPrice }),
       ),
     );
 
@@ -138,5 +154,167 @@ describe.skipIf(!hasDatabase)('Concurrent Bookings', () => {
       .expect(200);
 
     expect(bookingsRes.body).toHaveLength(3);
+  });
+
+  it('prevents overbooking when multi-quantity requests compete (2 requests of 3 for 5 tickets)', async () => {
+    const eventId = await createEventWithTickets(app, 5);
+
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
+    // Two users each try to book 3 tickets — only 5 available, so only one can succeed
+    const [res1, res2] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId, userEmail: 'bulk1@test.com', quantity: 3, expectedPrice }),
+      request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId, userEmail: 'bulk2@test.com', quantity: 3, expectedPrice }),
+    ]);
+
+    const statuses = [res1.status, res2.status].sort();
+    expect(statuses).toEqual([201, 409]);
+
+    const eventRes = await request(app.getHttpServer())
+      .get(`/events/${eventId}`)
+      .expect(200);
+
+    expect(eventRes.body.bookedTickets).toBe(3);
+    expect(eventRes.body.availableTickets).toBe(2);
+  });
+
+  it('allows concurrent bookings on different events (no cross-event locking)', async () => {
+    const [eventId1, eventId2] = await Promise.all([
+      createEventWithTickets(app, 1),
+      createEventWithTickets(app, 1),
+    ]);
+
+    const [price1, price2] = await Promise.all([
+      getCurrentPrice(app, eventId1),
+      getCurrentPrice(app, eventId2),
+    ]);
+
+    const [res1, res2] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId: eventId1, userEmail: 'cross1@test.com', quantity: 1, expectedPrice: price1 }),
+      request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId: eventId2, userEmail: 'cross2@test.com', quantity: 1, expectedPrice: price2 }),
+    ]);
+
+    // Both should succeed since they target different events
+    expect(res1.status).toBe(201);
+    expect(res2.status).toBe(201);
+  });
+
+  it('records correct price snapshot at booking time', async () => {
+    const eventId = await createEventWithTickets(app, 10);
+
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
+    const bookingRes = await request(app.getHttpServer())
+      .post('/bookings')
+      .send({ eventId, userEmail: 'price-check@test.com', quantity: 1, expectedPrice })
+      .expect(201);
+
+    // Price paid should be a positive number within floor/ceiling bounds
+    expect(bookingRes.body.pricePaid).toBeGreaterThanOrEqual(30);
+    expect(bookingRes.body.pricePaid).toBeLessThanOrEqual(150);
+    expect(bookingRes.body.bookedAt).toBeDefined();
+  });
+
+  it('rejects a single request for more tickets than available', async () => {
+    const eventId = await createEventWithTickets(app, 2);
+
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
+    const res = await request(app.getHttpServer())
+      .post('/bookings')
+      .send({ eventId, userEmail: 'greedy@test.com', quantity: 5, expectedPrice })
+      .expect(409);
+
+    expect(res.body.message).toContain('Not enough tickets available');
+
+    // Verify no tickets were booked
+    const eventRes = await request(app.getHttpServer())
+      .get(`/events/${eventId}`)
+      .expect(200);
+
+    expect(eventRes.body.bookedTickets).toBe(0);
+  });
+
+  it('handles high concurrency stress (10 requests for 5 tickets)', async () => {
+    const eventId = await createEventWithTickets(app, 5);
+    const expectedPrice = await getCurrentPrice(app, eventId);
+
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        request(app.getHttpServer())
+          .post('/bookings')
+          .send({ eventId, userEmail: `stress${i}@test.com`, quantity: 1, expectedPrice }),
+      ),
+    );
+
+    const statusCounts = responses.reduce<Record<number, number>>(
+      (acc, res) => {
+        acc[res.status] = (acc[res.status] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    expect(statusCounts[201]).toBe(5);
+    expect(statusCounts[409]).toBe(5);
+
+    const eventRes = await request(app.getHttpServer())
+      .get(`/events/${eventId}`)
+      .expect(200);
+
+    expect(eventRes.body.bookedTickets).toBe(5);
+    expect(eventRes.body.availableTickets).toBe(0);
+  });
+
+  it('sequential bookings exhaust inventory then fail', async () => {
+    const eventId = await createEventWithTickets(app, 3);
+
+    // Book all 3 tickets sequentially
+    for (let i = 0; i < 3; i++) {
+      const expectedPrice = await getCurrentPrice(app, eventId);
+      await request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId, userEmail: `seq${i}@test.com`, quantity: 1, expectedPrice })
+        .expect(201);
+    }
+
+    // Next booking should fail
+    const expectedPrice = await getCurrentPrice(app, eventId);
+    const res = await request(app.getHttpServer())
+      .post('/bookings')
+      .send({ eventId, userEmail: 'seq-late@test.com', quantity: 1, expectedPrice })
+      .expect(409);
+
+    expect(res.body.message).toContain('Not enough tickets available');
+  });
+
+  it('failed bookings return proper error structure', async () => {
+    const eventId = await createEventWithTickets(app, 1);
+
+    // Exhaust the ticket
+    const price1 = await getCurrentPrice(app, eventId);
+    await request(app.getHttpServer())
+      .post('/bookings')
+      .send({ eventId, userEmail: 'first@test.com', quantity: 1, expectedPrice: price1 })
+      .expect(201);
+
+    // Attempt to book again
+    const price2 = await getCurrentPrice(app, eventId);
+    const res = await request(app.getHttpServer())
+      .post('/bookings')
+      .send({ eventId, userEmail: 'second@test.com', quantity: 1, expectedPrice: price2 })
+      .expect(409);
+
+    expect(res.body).toHaveProperty('statusCode', 409);
+    expect(res.body).toHaveProperty('message');
+    expect(res.body.message).toContain('Not enough tickets available');
   });
 });

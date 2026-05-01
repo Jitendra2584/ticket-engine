@@ -86,12 +86,14 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
       expect(detailRes.body.priceBreakdown.finalPrice).toBeLessThanOrEqual(150);
 
       // Step 4: Book tickets via POST /bookings
+      const currentPrice = detailRes.body.priceBreakdown.finalPrice;
       const bookingRes = await request(app.getHttpServer())
         .post('/bookings')
         .send({
           eventId: createdEventId,
           userEmail: 'integration@test.com',
           quantity: 2,
+          expectedPrice: currentPrice,
         })
         .expect(201);
 
@@ -142,6 +144,7 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
           eventId: 1,
           userEmail: 'not-an-email',
           quantity: 1,
+          expectedPrice: 50,
         })
         .expect(400);
 
@@ -155,6 +158,7 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
           eventId: 1,
           userEmail: 'valid@email.com',
           quantity: 0,
+          expectedPrice: 50,
         })
         .expect(400);
 
@@ -168,6 +172,7 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
           eventId: 999999,
           userEmail: 'valid@email.com',
           quantity: 1,
+          expectedPrice: 50,
         })
         .expect(404);
 
@@ -198,6 +203,12 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
 
       const eventId = createRes.body.id;
 
+      // Get current price
+      const detailRes = await request(app.getHttpServer())
+        .get(`/events/${eventId}`)
+        .expect(200);
+      const expectedPrice = detailRes.body.priceBreakdown.finalPrice;
+
       // Book 2 tickets — should succeed
       await request(app.getHttpServer())
         .post('/bookings')
@@ -205,8 +216,15 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
           eventId,
           userEmail: 'buyer@test.com',
           quantity: 2,
+          expectedPrice,
         })
         .expect(201);
+
+      // Get updated price for the next attempt
+      const updatedRes = await request(app.getHttpServer())
+        .get(`/events/${eventId}`)
+        .expect(200);
+      const updatedPrice = updatedRes.body.priceBreakdown.finalPrice;
 
       // Try to book 1 more — should fail with 409
       const overRes = await request(app.getHttpServer())
@@ -215,6 +233,7 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
           eventId,
           userEmail: 'latecomer@test.com',
           quantity: 1,
+          expectedPrice: updatedPrice,
         })
         .expect(409);
 
@@ -332,18 +351,23 @@ describe.skipIf(!hasDatabase)('Booking Flow Integration', () => {
         .expect(200);
 
       // Book tickets
-      await request(app.getHttpServer())
-        .post('/bookings')
-        .send({ eventId, userEmail: 'cache@test.com', quantity: 5 })
-        .expect(201);
-
-      // Immediately fetch detail — should show updated ticket count (cache was busted)
       const detailRes = await request(app.getHttpServer())
         .get(`/events/${eventId}`)
         .expect(200);
+      const expectedPrice = detailRes.body.priceBreakdown.finalPrice;
 
-      expect(detailRes.body.bookedTickets).toBe(5);
-      expect(detailRes.body.availableTickets).toBe(15);
+      await request(app.getHttpServer())
+        .post('/bookings')
+        .send({ eventId, userEmail: 'cache@test.com', quantity: 5, expectedPrice })
+        .expect(201);
+
+      // Immediately fetch detail — should show updated ticket count (cache was busted)
+      const verifyRes = await request(app.getHttpServer())
+        .get(`/events/${eventId}`)
+        .expect(200);
+
+      expect(verifyRes.body.bookedTickets).toBe(5);
+      expect(verifyRes.body.availableTickets).toBe(15);
     });
   });
 });

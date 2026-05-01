@@ -1,5 +1,6 @@
 import {
   check,
+  index,
   integer,
   jsonb,
   numeric,
@@ -9,7 +10,12 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { PricingRulesConfig } from ".";
+
+export interface PricingRulesConfig {
+  timeRule: { enabled: boolean; weight: number };
+  demandRule: { enabled: boolean; weight: number };
+  inventoryRule: { enabled: boolean; weight: number };
+}
 
 export const events = pgTable(
   "events",
@@ -40,15 +46,23 @@ export const events = pgTable(
   ]
 );
 
-export const bookings = pgTable("bookings", {
-  id: serial("id").primaryKey(),
-  eventId: integer("event_id")
-    .notNull()
-    .references(() => events.id),
-  userEmail: text("user_email").notNull(),
-  quantity: integer("quantity").notNull(),
-  pricePaid: numeric("price_paid", { precision: 10, scale: 2 }).notNull(),
-  bookedAt: timestamp("booked_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const bookings = pgTable(
+  "bookings",
+  {
+    id: serial("id").primaryKey(),
+    eventId: integer("event_id")
+      .notNull()
+      .references(() => events.id),
+    userEmail: text("user_email").notNull(),
+    quantity: integer("quantity").notNull(),
+    pricePaid: numeric("price_paid", { precision: 10, scale: 2 }).notNull(),
+    bookedAt: timestamp("booked_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("idx_bookings_event_id").on(table.eventId),
+    index("idx_bookings_booked_at").on(table.bookedAt),
+    index("idx_bookings_user_email").on(table.userEmail),
+  ],
+);

@@ -1,4 +1,4 @@
-import { Transform, Type } from "class-transformer";
+import { Type } from "class-transformer";
 import {
   IsString,
   IsNotEmpty,
@@ -27,15 +27,15 @@ export class PricingConfig {
 
 export class PricingRulesConfigDto {
   @Type(() => PricingConfig)
-  @ValidateNested({ each: true })
+  @ValidateNested()
   timeRule!: PricingConfig;
 
   @Type(() => PricingConfig)
-  @ValidateNested({ each: true })
+  @ValidateNested()
   demandRule!: PricingConfig;
 
   @Type(() => PricingConfig)
-  @ValidateNested({ each: true })
+  @ValidateNested()
   inventoryRule!: PricingConfig;
 }
 
@@ -77,7 +77,7 @@ export class CreateEventDto {
   ceilingPrice!: number;
 
   @Type(() => PricingRulesConfigDto)
-  @ValidateNested({ each: true })
+  @ValidateNested()
   @IsOptional()
   pricingRules?: PricingRulesConfigDto;
 }

@@ -43,23 +43,17 @@ export class AnalyticsService {
       throw new NotFoundException(`Event with id ${id} not found`);
     }
 
-    const eventBookings = await this.db
-      .select()
+    const [agg] = await this.db
+      .select({
+        totalTicketsSold: sql<string>`coalesce(sum(${bookings.quantity}), 0)`,
+        totalRevenue: sql<string>`coalesce(sum(${bookings.pricePaid}::numeric * ${bookings.quantity}), 0)`,
+      })
       .from(bookings)
       .where(eq(bookings.eventId, id));
 
-    let totalTicketsSold = 0;
-    let totalRevenue = 0;
-
-    for (const booking of eventBookings) {
-      totalTicketsSold += booking.quantity;
-      totalRevenue += parseFloat(booking.pricePaid) * booking.quantity;
-    }
-
-    const averagePricePaid =
-      totalTicketsSold > 0 ? totalRevenue / totalTicketsSold : 0;
-
-    const remainingTickets = event.totalTickets - event.bookedTickets;
+    const totalTicketsSold = agg ? parseInt(agg.totalTicketsSold, 10) : 0;
+    const totalRevenue = agg ? parseFloat(agg.totalRevenue) : 0;
+    const averagePricePaid = totalTicketsSold > 0 ? totalRevenue / totalTicketsSold : 0;
 
     return {
       eventId: event.id,
@@ -67,7 +61,7 @@ export class AnalyticsService {
       totalTicketsSold,
       totalRevenue,
       averagePricePaid,
-      remainingTickets,
+      remainingTickets: event.totalTickets - event.bookedTickets,
     };
   }
 

@@ -4,7 +4,6 @@ import { events, bookings } from '@repo/database';
 import type { db as drizzleDb } from '@repo/database';
 import { DATABASE } from '../database/database.constants';
 import { PricingService } from '../pricing/pricing.service';
-import { CacheService, CachePrefix, CacheTTL } from '../redis/cache.service';
 import type { CreateEventDto, PricingRulesConfigDto } from './dto/create-event.dto';
 import type { EventListItem, EventDetailResponse } from './dto/event-response.dto';
 
@@ -23,7 +22,6 @@ export class EventsService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly pricingService: PricingService,
-    private readonly cache: CacheService,
   ) {}
 
   /**
@@ -31,10 +29,6 @@ export class EventsService {
    * For each event, counts recent bookings (last 60 min) to feed the demand rule.
    */
   async findAll(): Promise<EventListItem[]> {
-    // Try cache first
-    const cached = await this.cache.get<EventListItem[]>(CachePrefix.EVENT_LIST);
-    if (cached) return cached;
-
     const now = new Date();
     const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
@@ -98,8 +92,6 @@ export class EventsService {
       };
     });
 
-    // Cache the result
-    await this.cache.set(CachePrefix.EVENT_LIST, result, CacheTTL.EVENT);
     return result;
   }
 
@@ -108,11 +100,6 @@ export class EventsService {
    * Throws NotFoundException if the event does not exist.
    */
   async findOne(id: number): Promise<EventDetailResponse> {
-    // Try cache first
-    const cacheKey = `${CachePrefix.EVENT_DETAIL}:${id}`;
-    const cached = await this.cache.get<EventDetailResponse>(cacheKey);
-    if (cached) return cached;
-
     const now = new Date();
     const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
@@ -171,8 +158,6 @@ export class EventsService {
       priceBreakdown,
     };
 
-    // Cache the result
-    await this.cache.set(cacheKey, result, CacheTTL.EVENT);
     return result;
   }
 
@@ -198,9 +183,6 @@ export class EventsService {
         pricingRules,
       })
       .returning();
-
-    // Invalidate event list cache so the new event appears immediately
-    await this.cache.del(CachePrefix.EVENT_LIST);
 
     return created;
   }

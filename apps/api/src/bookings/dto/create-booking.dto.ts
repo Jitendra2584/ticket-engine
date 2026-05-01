@@ -1,4 +1,4 @@
-import { IsEmail, IsInt, Min } from 'class-validator';
+import { IsEmail, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 
 /**
  * DTO for creating a new booking.
@@ -16,6 +16,11 @@ export class CreateBookingDto {
   @IsInt()
   @Min(1)
   quantity!: number;
+
+  /** Price the user saw on the frontend. If it differs from the
+   *  server-calculated price, the booking is rejected with PRICE_CHANGED. */
+  @IsNumber()
+  expectedPrice!: number;
 }
 
 /**
@@ -24,5 +29,5 @@ export class CreateBookingDto {
  */
 export type CreateBookingInput = Pick<
   CreateBookingDto,
-  'eventId' | 'userEmail' | 'quantity'
+  'eventId' | 'userEmail' | 'quantity' | 'expectedPrice'
 >;

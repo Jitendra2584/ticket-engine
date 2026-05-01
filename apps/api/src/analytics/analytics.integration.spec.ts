@@ -48,15 +48,21 @@ describe.skipIf(!hasDatabase)('Analytics Integration', () => {
 
     eventId = eventRes.body.id;
 
+    // Get current price for bookings
+    const detailRes = await request(app.getHttpServer())
+      .get(`/events/${eventId}`)
+      .expect(200);
+    const expectedPrice = detailRes.body.priceBreakdown.finalPrice;
+
     // Create two bookings
     await request(app.getHttpServer())
       .post('/bookings')
-      .send({ eventId, userEmail: 'analytics1@test.com', quantity: 3 })
+      .send({ eventId, userEmail: 'analytics1@test.com', quantity: 3, expectedPrice })
       .expect(201);
 
     await request(app.getHttpServer())
       .post('/bookings')
-      .send({ eventId, userEmail: 'analytics2@test.com', quantity: 2 })
+      .send({ eventId, userEmail: 'analytics2@test.com', quantity: 2, expectedPrice })
       .expect(201);
   });
 
