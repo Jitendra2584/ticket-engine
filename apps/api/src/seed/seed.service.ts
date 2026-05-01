@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { events, bookings } from '@repo/database';
 import type { db as drizzleDb } from '@repo/database';
 import { DATABASE } from '../database/database.constants';
+import { CacheService, CachePrefix } from '../redis/cache.service';
 
 /** Type alias for the injected Drizzle database client. */
 type Database = typeof drizzleDb;
@@ -20,7 +21,10 @@ const ALL_RULES_ENABLED = {
 
 @Injectable()
 export class SeedService {
-  constructor(@Inject(DATABASE) private readonly db: Database) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: Database,
+    private readonly cacheService: CacheService,
+  ) {}
 
   /**
    * Seeds the database with sample events. Deletes existing bookings and
@@ -96,6 +100,13 @@ export class SeedService {
     ];
 
     const created = await this.db.insert(events).values(sampleEvents).returning();
+
+    // Flush all event and booking caches after seed
+    await this.cacheService.del(
+      CachePrefix.EVENT_LIST,
+      ...created.map((e) => `${CachePrefix.EVENT_DETAIL}:${e.id}`),
+      ...created.map((e) => `${CachePrefix.RECENT_BOOKINGS}:${e.id}`),
+    );
 
     return created;
   }

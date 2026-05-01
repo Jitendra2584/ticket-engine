@@ -4,6 +4,7 @@ import { events, bookings } from '@repo/database';
 import type { db as drizzleDb } from '@repo/database';
 import { DATABASE } from '../database/database.constants';
 import { PricingService } from '../pricing/pricing.service';
+import { CacheService, CachePrefix, CacheTTL } from '../redis/cache.service';
 import type { CreateEventDto, PricingRulesConfigDto } from './dto/create-event.dto';
 import type { EventListItem, EventDetailResponse } from './dto/event-response.dto';
 
@@ -22,6 +23,7 @@ export class EventsService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly pricingService: PricingService,
+    private readonly cacheService: CacheService,
   ) {}
 
   /**
@@ -29,6 +31,10 @@ export class EventsService {
    * For each event, counts recent bookings (last 60 min) to feed the demand rule.
    */
   async findAll(): Promise<EventListItem[]> {
+    // Check cache first
+    const cached = await this.cacheService.get<EventListItem[]>(CachePrefix.EVENT_LIST);
+    if (cached) return cached;
+
     const now = new Date();
     const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
@@ -92,6 +98,9 @@ export class EventsService {
       };
     });
 
+    // Populate cache
+    await this.cacheService.set(CachePrefix.EVENT_LIST, result, CacheTTL.EVENT);
+
     return result;
   }
 
@@ -100,6 +109,11 @@ export class EventsService {
    * Throws NotFoundException if the event does not exist.
    */
   async findOne(id: number): Promise<EventDetailResponse> {
+    // Check cache first
+    const cacheKey = `${CachePrefix.EVENT_DETAIL}:${id}`;
+    const cached = await this.cacheService.get<EventDetailResponse>(cacheKey);
+    if (cached) return cached;
+
     const now = new Date();
     const sixtyMinutesAgo = new Date(now.getTime() - 60 * 60 * 1000);
 
@@ -112,15 +126,19 @@ export class EventsService {
       throw new NotFoundException(`Event with id ${id} not found`);
     }
 
-    // Count recent bookings for this event
-    const [recentResult] = await this.db
-      .select({ recentCount: count() })
-      .from(bookings)
-      .where(
-        sql`${bookings.eventId} = ${id} AND ${bookings.bookedAt} >= ${sixtyMinutesAgo.toISOString()}`,
-      );
-
-    const recentBookingsCount = recentResult ? Number(recentResult.recentCount) : 0;
+    // Try Redis demand counter first, fall back to DB count
+    let recentBookingsCount = await this.cacheService.getCount(
+      `${CachePrefix.RECENT_BOOKINGS}:${id}`,
+    );
+    if (recentBookingsCount === 0) {
+      const [recentResult] = await this.db
+        .select({ recentCount: count() })
+        .from(bookings)
+        .where(
+          sql`${bookings.eventId} = ${id} AND ${bookings.bookedAt} >= ${sixtyMinutesAgo.toISOString()}`,
+        );
+      recentBookingsCount = recentResult ? Number(recentResult.recentCount) : 0;
+    }
 
     const basePrice = parseFloat(event.basePrice);
     const floorPrice = parseFloat(event.floorPrice);
@@ -158,6 +176,9 @@ export class EventsService {
       priceBreakdown,
     };
 
+    // Populate cache
+    await this.cacheService.set(cacheKey, result, CacheTTL.EVENT);
+
     return result;
   }
 
@@ -183,6 +204,9 @@ export class EventsService {
         pricingRules,
       })
       .returning();
+
+    // Invalidate event list cache so the new event appears immediately
+    await this.cacheService.del(CachePrefix.EVENT_LIST);
 
     return created;
   }

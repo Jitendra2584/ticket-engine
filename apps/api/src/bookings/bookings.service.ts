@@ -9,6 +9,7 @@ import { events, bookings } from '@repo/database';
 import type { db as drizzleDb } from '@repo/database';
 import { DATABASE } from '../database/database.constants';
 import { PricingService } from '../pricing/pricing.service';
+import { CacheService } from '../redis/cache.service';
 import type { CreateBookingDto } from './dto/create-booking.dto';
 import type { BookingResponse } from './dto/booking-response.dto';
 
@@ -20,6 +21,7 @@ export class BookingsService {
   constructor(
     @Inject(DATABASE) private readonly db: Database,
     private readonly pricingService: PricingService,
+    private readonly cacheService: CacheService,
   ) {}
 
   /**
@@ -134,6 +136,9 @@ export class BookingsService {
 
       return booking;
     });
+
+    // Atomically invalidate event caches and increment demand counter
+    await this.cacheService.invalidateAfterBooking(result.eventId);
 
     return {
       id: result.id,

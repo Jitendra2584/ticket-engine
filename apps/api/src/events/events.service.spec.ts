@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NotFoundException } from '@nestjs/common';
 import { EventsService } from './events.service';
 import type { PricingService } from '../pricing/pricing.service';
+import type { CacheService } from '../redis/cache.service';
 import type { PriceBreakdown } from '../pricing/pricing.types';
 
 /* ------------------------------------------------------------------ */
@@ -53,6 +54,18 @@ function createMockPricingService() {
     buildRules: ReturnType<typeof vi.fn>;
     computePrice: ReturnType<typeof vi.fn>;
   };
+}
+
+function createMockCacheService() {
+  return {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined),
+    del: vi.fn().mockResolvedValue(undefined),
+    getCount: vi.fn().mockResolvedValue(0),
+    increment: vi.fn().mockResolvedValue(0),
+    invalidateAfterBooking: vi.fn().mockResolvedValue(0),
+    isAvailable: vi.fn().mockReturnValue(false),
+  } as unknown as CacheService & Record<string, ReturnType<typeof vi.fn>>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -158,10 +171,13 @@ describe('EventsService', () => {
   let mocks: ReturnType<typeof createMockDb>;
   let pricingService: ReturnType<typeof createMockPricingService>;
 
+  let cacheService: ReturnType<typeof createMockCacheService>;
+
   beforeEach(() => {
     mocks = createMockDb();
     pricingService = createMockPricingService();
-    service = new EventsService(mocks.db as any, pricingService);
+    cacheService = createMockCacheService();
+    service = new EventsService(mocks.db as any, pricingService, cacheService as any);
   });
 
   /* ---------------------------------------------------------------- */
