@@ -25,4 +25,7 @@ CREATE TABLE "events" (
 	CONSTRAINT "base_price_in_range" CHECK ("events"."base_price" >= "events"."floor_price" AND "events"."base_price" <= "events"."ceiling_price")
 );
 --> statement-breakpoint
-ALTER TABLE "bookings" ADD CONSTRAINT "bookings_event_id_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "bookings" ADD CONSTRAINT "bookings_event_id_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_bookings_event_id" ON "bookings" USING btree ("event_id");--> statement-breakpoint
+CREATE INDEX "idx_bookings_booked_at" ON "bookings" USING btree ("booked_at");--> statement-breakpoint
+CREATE INDEX "idx_bookings_user_email" ON "bookings" USING btree ("user_email");
