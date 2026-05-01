@@ -18,7 +18,7 @@ A full-stack event ticketing platform with dynamic pricing. Prices adjust automa
 ## Quick Setup (5 commands)
 
 ```bash
-git clone <repo-url> && cd ticketing-platform-monorepo-main
+git clone <repo-url> && cd ticket-engine
 cp .env.example .env          # or copy the values below — see Environment Variables
 docker compose up -d          # starts PostgreSQL on :5432 and Redis on :6379
 pnpm install
